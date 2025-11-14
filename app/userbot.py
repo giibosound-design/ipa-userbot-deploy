@@ -1,6 +1,6 @@
 """
-Telethon IPA Patcher Userbot - Production Ready
-Runs as a user account with full 4GB file support
+Telethon IPA Patcher Userbot - Single Window UI System
+Professional, clean, single-message interface
 """
 import os
 import time
@@ -9,9 +9,17 @@ import asyncio
 from pathlib import Path
 from telethon import TelegramClient, events, Button
 from telethon.tl.types import DocumentAttributeFilename
+
 from app import config
 from app.operations import IPAOperations
 from app.progress import ProgressBar, human_readable_size
+from app.window_manager import (
+    get_or_create_window, update_window, delete_window,
+    get_user_state, set_user_state, clear_user_state,
+    add_user_file, get_all_user_files, clear_user_files,
+    clear_all_messages, reset_user
+)
+from app import ui_style as ui
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -33,316 +41,426 @@ ipa_ops = IPAOperations(
     dylib_path=config.DYLIB_PATH
 )
 
-# User sessions
-user_sessions = {}
 
-
-def get_main_menu():
+def get_main_menu_buttons():
     """Get main menu keyboard"""
     return [
-        [Button.inline("🔧 Patch IPA", b"patch_ipa")],
-        [Button.inline("📊 Bot Status", b"bot_status")],
-        [Button.inline("ℹ️ Help", b"show_help")],
-        [Button.inline("🗑️ Clear Files", b"clear_files")]
+        [Button.inline(f"{ui.EMOJI['patch']} Patch IPA", b"patch_ipa")],
+        [
+            Button.inline(f"{ui.EMOJI['status']} Status", b"show_status"),
+            Button.inline(f"{ui.EMOJI['help']} Help", b"show_help")
+        ],
+        [
+            Button.inline(f"{ui.EMOJI['settings']} Settings", b"show_settings"),
+            Button.inline(f"{ui.EMOJI['about']} About", b"show_about")
+        ],
+        [Button.inline(f"{ui.EMOJI['clear']} Clear All", b"confirm_clear")]
     ]
 
 
+def get_back_button():
+    """Get back to menu button"""
+    return [[Button.inline(f"{ui.EMOJI['back']} Back to Menu", b"main_menu")]]
+
+
+async def show_main_menu(event):
+    """Show main menu in single window"""
+    chat_id = event.chat_id
+    
+    # Get or create main window
+    try:
+        window = await get_or_create_window(
+            client,
+            event,
+            ui.MAIN_MENU,
+            get_main_menu_buttons()
+        )
+    except:
+        # Fallback: send new message
+        window = await event.respond(
+            ui.MAIN_MENU,
+            buttons=get_main_menu_buttons()
+        )
+    
+    # Delete the command message if it's not the window
+    try:
+        if hasattr(event, 'message') and event.message.id != window.id:
+            await event.message.delete()
+    except:
+        pass
+
+
+# ============================================================================
+# COMMAND HANDLERS
+# ============================================================================
+
 @client.on(events.NewMessage(pattern=r'^/start$'))
-async def start_command(event):
+async def cmd_start(event):
     """Handle /start command"""
     try:
-        await event.respond(
-            "🤖 **IPA Patcher Bot**\n\n"
-            "Welcome! I can patch IPA files with blatantsPatch.dylib.\n\n"
-            "**Features:**\n"
-            "🔧 Automatic IPA patching\n"
-            "📊 4GB file support (Premium)\n"
-            "⚡ Fast upload/download speeds\n"
-            "📈 Real-time progress bars\n\n"
-            "**How to use:**\n"
-            "1. Upload an IPA file\n"
-            "2. Click 'Patch IPA' button\n"
-            "3. Download your patched IPA!\n\n"
-            "Choose an option below:",
-            buttons=get_main_menu()
-        )
+        await show_main_menu(event)
     except Exception as e:
-        logger.error(f"Error in start_command: {e}")
-        await event.respond("❌ Error showing menu. Please try /start again.")
+        logger.error(f"Error in /start: {e}")
+
+
+@client.on(events.NewMessage(pattern=r'^/menu$'))
+async def cmd_menu(event):
+    """Handle /menu command"""
+    try:
+        await show_main_menu(event)
+    except Exception as e:
+        logger.error(f"Error in /menu: {e}")
 
 
 @client.on(events.NewMessage(pattern=r'^/help$'))
-async def help_command(event):
+async def cmd_help(event):
     """Handle /help command"""
     try:
-        await event.respond(
-            "📖 **Help & Commands**\n\n"
-            "**Commands:**\n"
-            "/start - Show main menu\n"
-            "/help - Show this help\n"
-            "/status - Show bot status\n"
-            "/clear - Clear all uploaded files\n\n"
-            "**How to patch IPA:**\n"
-            "1️⃣ Upload an IPA file (up to 4GB)\n"
-            "2️⃣ Click the 'Patch IPA' button\n"
-            "3️⃣ Wait for processing\n"
-            "4️⃣ Download your patched IPA\n\n"
-            "**Supported files:**\n"
-            "• .ipa - iOS applications\n"
-            "• .deb - Debian packages\n"
-            "• .dylib - Dynamic libraries\n\n"
-            "**Features:**\n"
-            "✅ 4GB file support\n"
-            "✅ Fast upload/download\n"
-            "✅ Progress bars\n"
-            "✅ Automatic cleanup",
-            buttons=[[Button.inline("« Back to Menu", b"main_menu")]]
+        chat_id = event.chat_id
+        
+        # Update window or create new one
+        success = await update_window(
+            client,
+            chat_id,
+            ui.HELP_TEXT,
+            get_back_button()
         )
+        
+        if not success:
+            await show_main_menu(event)
+        
+        # Delete command message
+        try:
+            await event.message.delete()
+        except:
+            pass
+            
     except Exception as e:
-        logger.error(f"Error in help_command: {e}")
-        await event.respond("❌ Error showing help. Please try /help again.")
+        logger.error(f"Error in /help: {e}")
 
 
 @client.on(events.NewMessage(pattern=r'^/status$'))
-async def status_command(event):
+async def cmd_status(event):
     """Handle /status command"""
     try:
+        chat_id = event.chat_id
         me = await client.get_me()
         
-        # Count files in session
-        chat_id = event.chat_id
-        file_count = len(user_sessions.get(chat_id, {}).get('files', []))
+        user_info = {
+            'name': f"{me.first_name} {me.last_name or ''}".strip(),
+            'username': me.username or 'none',
+            'premium': me.premium
+        }
         
-        status_text = (
-            "📊 **Bot Status**\n\n"
-            f"**User:** {me.first_name}\n"
-            f"**Username:** @{me.username}\n"
-            f"**Premium:** {'Yes ✅' if me.premium else 'No ❌'}\n"
-            f"**4GB Support:** {'Enabled ✅' if me.premium else 'Limited to 2GB'}\n\n"
-            f"**Session:** Active ✅\n"
-            f"**Files in queue:** {file_count}\n"
-            f"**Bot:** Running ✅"
+        file_count = len(get_all_user_files(chat_id))
+        
+        # Update window
+        success = await update_window(
+            client,
+            chat_id,
+            ui.status_text(user_info, file_count),
+            get_back_button()
         )
         
-        await event.respond(
-            status_text,
-            buttons=[[Button.inline("« Back to Menu", b"main_menu")]]
-        )
+        if not success:
+            await show_main_menu(event)
+        
+        # Delete command message
+        try:
+            await event.message.delete()
+        except:
+            pass
+            
     except Exception as e:
-        logger.error(f"Error in status_command: {e}")
-        await event.respond("❌ Error getting status. Please try /status again.")
+        logger.error(f"Error in /status: {e}")
 
 
 @client.on(events.NewMessage(pattern=r'^/clear$'))
-async def clear_command(event):
-    """Handle /clear command"""
+async def cmd_clear(event):
+    """Handle /clear command - show confirmation"""
     try:
         chat_id = event.chat_id
         
-        # Clear user session
-        if chat_id in user_sessions:
-            files = user_sessions[chat_id].get('files', [])
-            for file_path in files:
-                try:
-                    ipa_ops.cleanup_file(file_path)
-                except:
-                    pass
-            user_sessions[chat_id] = {'files': []}
-        
-        await event.respond(
-            "🗑️ **Files Cleared**\n\n"
-            "All uploaded files have been removed.",
-            buttons=[[Button.inline("« Back to Menu", b"main_menu")]]
+        # Show confirmation
+        success = await update_window(
+            client,
+            chat_id,
+            ui.CLEAR_CONFIRM_TEXT,
+            [
+                [Button.inline(f"{ui.EMOJI['error']} Yes, Clear All", b"do_clear")],
+                [Button.inline(f"{ui.EMOJI['back']} Cancel", b"main_menu")]
+            ]
         )
+        
+        if not success:
+            await show_main_menu(event)
+        
+        # Delete command message
+        try:
+            await event.message.delete()
+        except:
+            pass
+            
     except Exception as e:
-        logger.error(f"Error in clear_command: {e}")
-        await event.respond("❌ Error clearing files. Please try /clear again.")
+        logger.error(f"Error in /clear: {e}")
 
+
+# ============================================================================
+# CALLBACK HANDLERS
+# ============================================================================
 
 @client.on(events.CallbackQuery(pattern=b"main_menu"))
-async def main_menu_callback(event):
+async def cb_main_menu(event):
     """Show main menu"""
     try:
-        await event.edit(
-            "🤖 **IPA Patcher Bot**\n\n"
-            "Choose an option below:",
-            buttons=get_main_menu()
+        chat_id = event.chat_id
+        
+        await update_window(
+            client,
+            chat_id,
+            ui.MAIN_MENU,
+            get_main_menu_buttons()
         )
+        
+        await event.answer()
     except Exception as e:
-        logger.error(f"Error in main_menu_callback: {e}")
+        logger.error(f"Error in main_menu callback: {e}")
+        await event.answer(f"{ui.EMOJI['error']} Error", alert=True)
 
 
 @client.on(events.CallbackQuery(pattern=b"show_help"))
-async def help_callback(event):
+async def cb_help(event):
     """Show help"""
     try:
-        await event.edit(
-            "📖 **Help & Commands**\n\n"
-            "**Commands:**\n"
-            "/start - Show main menu\n"
-            "/help - Show this help\n"
-            "/status - Show bot status\n"
-            "/clear - Clear all uploaded files\n\n"
-            "**How to patch IPA:**\n"
-            "1️⃣ Upload an IPA file (up to 4GB)\n"
-            "2️⃣ Click the 'Patch IPA' button\n"
-            "3️⃣ Wait for processing\n"
-            "4️⃣ Download your patched IPA\n\n"
-            "**Supported files:**\n"
-            "• .ipa - iOS applications\n"
-            "• .deb - Debian packages\n"
-            "• .dylib - Dynamic libraries",
-            buttons=[[Button.inline("« Back to Menu", b"main_menu")]]
+        chat_id = event.chat_id
+        
+        await update_window(
+            client,
+            chat_id,
+            ui.HELP_TEXT,
+            get_back_button()
         )
+        
+        await event.answer()
     except Exception as e:
-        logger.error(f"Error in help_callback: {e}")
+        logger.error(f"Error in help callback: {e}")
+        await event.answer(f"{ui.EMOJI['error']} Error", alert=True)
 
 
-@client.on(events.CallbackQuery(pattern=b"bot_status"))
-async def status_callback(event):
-    """Show bot status"""
+@client.on(events.CallbackQuery(pattern=b"show_status"))
+async def cb_status(event):
+    """Show status"""
     try:
+        chat_id = event.chat_id
         me = await client.get_me()
-        chat_id = event.chat_id
-        file_count = len(user_sessions.get(chat_id, {}).get('files', []))
         
-        await event.edit(
-            "📊 **Bot Status**\n\n"
-            f"**User:** {me.first_name}\n"
-            f"**Username:** @{me.username}\n"
-            f"**Premium:** {'Yes ✅' if me.premium else 'No ❌'}\n"
-            f"**4GB Support:** {'Enabled ✅' if me.premium else 'Limited to 2GB'}\n\n"
-            f"**Session:** Active ✅\n"
-            f"**Files in queue:** {file_count}\n"
-            f"**Bot:** Running ✅",
-            buttons=[[Button.inline("« Back to Menu", b"main_menu")]]
+        user_info = {
+            'name': f"{me.first_name} {me.last_name or ''}".strip(),
+            'username': me.username or 'none',
+            'premium': me.premium
+        }
+        
+        file_count = len(get_all_user_files(chat_id))
+        
+        await update_window(
+            client,
+            chat_id,
+            ui.status_text(user_info, file_count),
+            get_back_button()
         )
+        
+        await event.answer()
     except Exception as e:
-        logger.error(f"Error in status_callback: {e}")
+        logger.error(f"Error in status callback: {e}")
+        await event.answer(f"{ui.EMOJI['error']} Error", alert=True)
 
 
-@client.on(events.CallbackQuery(pattern=b"clear_files"))
-async def clear_callback(event):
-    """Clear files"""
+@client.on(events.CallbackQuery(pattern=b"show_settings"))
+async def cb_settings(event):
+    """Show settings"""
     try:
         chat_id = event.chat_id
         
-        if chat_id in user_sessions:
-            files = user_sessions[chat_id].get('files', [])
-            for file_path in files:
-                try:
-                    ipa_ops.cleanup_file(file_path)
-                except:
-                    pass
-            user_sessions[chat_id] = {'files': []}
-        
-        await event.edit(
-            "🗑️ **Files Cleared**\n\n"
-            "All uploaded files have been removed.",
-            buttons=[[Button.inline("« Back to Menu", b"main_menu")]]
+        await update_window(
+            client,
+            chat_id,
+            ui.SETTINGS_TEXT,
+            get_back_button()
         )
+        
+        await event.answer()
     except Exception as e:
-        logger.error(f"Error in clear_callback: {e}")
+        logger.error(f"Error in settings callback: {e}")
+        await event.answer(f"{ui.EMOJI['error']} Error", alert=True)
+
+
+@client.on(events.CallbackQuery(pattern=b"show_about"))
+async def cb_about(event):
+    """Show about"""
+    try:
+        chat_id = event.chat_id
+        
+        await update_window(
+            client,
+            chat_id,
+            ui.ABOUT_TEXT,
+            get_back_button()
+        )
+        
+        await event.answer()
+    except Exception as e:
+        logger.error(f"Error in about callback: {e}")
+        await event.answer(f"{ui.EMOJI['error']} Error", alert=True)
+
+
+@client.on(events.CallbackQuery(pattern=b"confirm_clear"))
+async def cb_confirm_clear(event):
+    """Show clear confirmation"""
+    try:
+        chat_id = event.chat_id
+        
+        await update_window(
+            client,
+            chat_id,
+            ui.CLEAR_CONFIRM_TEXT,
+            [
+                [Button.inline(f"{ui.EMOJI['error']} Yes, Clear All", b"do_clear")],
+                [Button.inline(f"{ui.EMOJI['back']} Cancel", b"main_menu")]
+            ]
+        )
+        
+        await event.answer()
+    except Exception as e:
+        logger.error(f"Error in confirm_clear callback: {e}")
+        await event.answer(f"{ui.EMOJI['error']} Error", alert=True)
+
+
+@client.on(events.CallbackQuery(pattern=b"do_clear"))
+async def cb_do_clear(event):
+    """Execute clear all"""
+    try:
+        chat_id = event.chat_id
+        
+        await event.answer(f"{ui.EMOJI['processing']} Clearing...")
+        
+        # Clean up files
+        files = get_all_user_files(chat_id)
+        for file_path in files:
+            try:
+                ipa_ops.cleanup_file(file_path)
+            except:
+                pass
+        
+        # Reset user
+        await reset_user(client, chat_id)
+        
+        # Show fresh start
+        await client.send_message(
+            chat_id,
+            ui.CLEARED_TEXT + "\n\n" + ui.MAIN_MENU,
+            buttons=get_main_menu_buttons()
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in do_clear callback: {e}")
+        await event.answer(f"{ui.EMOJI['error']} Error clearing", alert=True)
 
 
 @client.on(events.CallbackQuery(pattern=b"patch_ipa"))
-async def patch_callback(event):
+async def cb_patch_ipa(event):
     """Handle patch IPA button"""
     try:
         chat_id = event.chat_id
         
         # Check if user has uploaded files
-        if chat_id not in user_sessions or not user_sessions[chat_id].get('files'):
-            await event.answer("⚠️ Please upload an IPA file first!", alert=True)
+        files = get_all_user_files(chat_id)
+        if not files:
+            await event.answer(f"{ui.EMOJI['warning']} Please upload an IPA file first!", alert=True)
             return
         
         # Get the last uploaded file
-        last_file = user_sessions[chat_id]['files'][-1]
+        last_file = files[-1]
         
         if not last_file.endswith('.ipa'):
-            await event.answer("⚠️ Please upload an IPA file!", alert=True)
+            await event.answer(f"{ui.EMOJI['warning']} Please upload an IPA file!", alert=True)
             return
         
-        await event.answer("🔧 Starting patch process...")
+        await event.answer(f"{ui.EMOJI['processing']} Starting patch process...")
         
         # Start patching
         await patch_ipa_file(event, last_file)
         
     except Exception as e:
-        logger.error(f"Error in patch_callback: {e}")
-        await event.answer("❌ Error starting patch. Please try again.", alert=True)
+        logger.error(f"Error in patch_ipa callback: {e}")
+        await event.answer(f"{ui.EMOJI['error']} Error starting patch", alert=True)
 
+
+# ============================================================================
+# FILE HANDLING
+# ============================================================================
 
 async def patch_ipa_file(event, file_path):
-    """Patch IPA file"""
+    """Patch IPA file with progress updates"""
     try:
+        chat_id = event.chat_id
         file_name = Path(file_path).name
+        file_size = human_readable_size(os.path.getsize(file_path))
         
-        # Send processing message
-        status_msg = await event.respond(
-            f"🔧 **Patching IPA**\n\n"
-            f"📱 File: {file_name}\n"
-            f"📦 Size: {human_readable_size(os.path.getsize(file_path))}\n\n"
-            "⏳ Processing...\n"
-            "This may take a few minutes...",
-            buttons=None
+        # Show patching progress
+        await update_window(
+            client,
+            chat_id,
+            ui.patching_progress_text(file_name, file_size),
+            None
         )
         
         # Patch IPA
         success, result = ipa_ops.patch_ipa(file_path)
         
         if success:
-            patched_size = os.path.getsize(result)
+            patched_size = human_readable_size(os.path.getsize(result))
+            patched_name = Path(result).name
             
-            # Upload patched IPA
-            await status_msg.edit(
-                "📤 **Uploading patched IPA...**\n\n"
-                "Please wait..."
-            )
-            
-            progress = ProgressBar(status_msg, "📤 Uploading...")
-            
+            # Upload patched IPA (outside the main window)
             await client.send_file(
-                event.chat_id,
+                chat_id,
                 result,
-                caption=f"✅ **Patched IPA Ready!**\n\n"
-                        f"📱 File: {Path(result).name}\n"
-                        f"📦 Size: {human_readable_size(patched_size)}\n\n"
-                        f"Patched with blatantsPatch.dylib",
-                attributes=[DocumentAttributeFilename(Path(result).name)],
-                progress_callback=progress,
-                buttons=[[Button.inline("« Back to Menu", b"main_menu")]]
+                caption=ui.success_text(patched_name, patched_size),
+                attributes=[DocumentAttributeFilename(patched_name)]
             )
             
-            await status_msg.edit(
-                "✅ **IPA Patched Successfully!**\n\n"
-                f"📱 Output: {Path(result).name}\n"
-                f"📦 Size: {human_readable_size(patched_size)}\n\n"
-                "Your patched IPA has been sent!",
-                buttons=[[Button.inline("« Back to Menu", b"main_menu")]]
+            # Update main window to show success
+            await update_window(
+                client,
+                chat_id,
+                ui.success_text(patched_name, patched_size),
+                get_back_button()
             )
             
             # Cleanup
             ipa_ops.cleanup_file(file_path)
             ipa_ops.cleanup_file(result)
+            clear_user_files(chat_id)
             
         else:
-            await status_msg.edit(
-                f"❌ **Patching Failed**\n\n"
-                f"Error: {result[:200]}\n\n"
-                "Please try again with a different IPA file.",
-                buttons=[[Button.inline("« Back to Menu", b"main_menu")]]
+            # Show error
+            await update_window(
+                client,
+                chat_id,
+                ui.error_text(result),
+                get_back_button()
             )
             ipa_ops.cleanup_file(file_path)
+            clear_user_files(chat_id)
             
     except Exception as e:
         logger.error(f"Error in patch_ipa_file: {e}")
         try:
-            await event.respond(
-                f"❌ **Error during processing**\n\n"
-                f"An unexpected error occurred.\n\n"
-                "Please try again or contact support.",
-                buttons=[[Button.inline("« Back to Menu", b"main_menu")]]
+            await update_window(
+                client,
+                event.chat_id,
+                ui.error_text(str(e)),
+                get_back_button()
             )
         except:
             pass
@@ -350,14 +468,19 @@ async def patch_ipa_file(event, file_path):
 
 @client.on(events.NewMessage)
 async def handle_file_upload(event):
-    """Handle file uploads"""
+    """Handle file uploads and forwarded files"""
     try:
-        # Ignore commands
+        # Ignore if it's a command
         if event.message.text and event.message.text.startswith('/'):
             return
         
         # Check if message has a document
         if not event.message.document:
+            # Delete non-file, non-command messages
+            try:
+                await event.message.delete()
+            except:
+                pass
             return
         
         # Get file name
@@ -368,81 +491,110 @@ async def handle_file_upload(event):
                 break
         
         if not file_name:
+            try:
+                await event.message.delete()
+            except:
+                pass
             return
         
         # Check file extension
         if not file_name.lower().endswith(('.ipa', '.deb', '.dylib')):
+            try:
+                await event.message.delete()
+            except:
+                pass
             return
         
-        # Send upload confirmation
-        status_msg = await event.respond(
-            f"📥 **Downloading {file_name}**\n\n"
-            f"Size: {human_readable_size(event.message.document.size)}\n"
-            "Please wait..."
+        chat_id = event.chat_id
+        file_size = human_readable_size(event.message.document.size)
+        
+        # Check if file was forwarded
+        is_forwarded = event.message.forward is not None
+        
+        # Show download progress in main window
+        await update_window(
+            client,
+            chat_id,
+            ui.download_progress_text(file_name, file_size, 0),
+            None
         )
         
         try:
             os.makedirs(config.TEMP_DIR, exist_ok=True)
             
-            # Download file with progress
+            # Download file
             file_path = os.path.join(
                 config.TEMP_DIR,
                 f"{int(time.time())}_{file_name}"
             )
             
-            progress = ProgressBar(status_msg, "📥 Downloading...")
+            # Custom progress callback that updates main window
+            async def progress_callback(current, total):
+                percent = int((current / total) * 100)
+                if percent % 10 == 0:  # Update every 10%
+                    await update_window(
+                        client,
+                        chat_id,
+                        ui.download_progress_text(file_name, file_size, percent),
+                        None
+                    )
             
             await client.download_media(
                 event.message.document,
                 file=file_path,
-                progress_callback=progress
+                progress_callback=progress_callback
             )
-            
-            download_size = os.path.getsize(file_path)
             
             # Store in user session
-            chat_id = event.chat_id
-            if chat_id not in user_sessions:
-                user_sessions[chat_id] = {'files': []}
-            user_sessions[chat_id]['files'].append(file_path)
+            add_user_file(chat_id, file_path)
             
-            await status_msg.edit(
-                f"✅ **Download complete!**\n\n"
-                f"📱 File: {file_name}\n"
-                f"📦 Size: {human_readable_size(download_size)}\n\n"
-                "Click 'Patch IPA' to start patching:",
-                buttons=[[Button.inline("🔧 Patch IPA", b"patch_ipa")],
-                        [Button.inline("« Back to Menu", b"main_menu")]]
+            # Show file received
+            await update_window(
+                client,
+                chat_id,
+                ui.file_received_text(file_name, file_size, is_forwarded),
+                [[Button.inline(f"{ui.EMOJI['patch']} Patch IPA", b"patch_ipa")],
+                 [Button.inline(f"{ui.EMOJI['back']} Back to Menu", b"main_menu")]]
             )
+            
+            # Delete the uploaded/forwarded message
+            try:
+                await event.message.delete()
+            except:
+                pass
             
         except Exception as e:
             logger.error(f"Error downloading file: {e}")
-            await status_msg.edit(
-                f"❌ **Download failed**\n\n"
-                f"Error: {str(e)[:200]}\n\n"
-                "Please try uploading again.",
-                buttons=[[Button.inline("« Back to Menu", b"main_menu")]]
+            await update_window(
+                client,
+                chat_id,
+                ui.error_text(f"Download failed: {str(e)}"),
+                get_back_button()
             )
             
     except Exception as e:
         logger.error(f"Error in handle_file_upload: {e}")
 
 
+# ============================================================================
+# MAIN
+# ============================================================================
+
 async def main():
     """Main function to start the userbot"""
     try:
-        logger.info("🚀 Starting IPA Patcher Userbot...")
+        logger.info(f"{ui.EMOJI['robot']} Starting IPA Patcher Userbot...")
         
         # Start client
         await client.start(phone=config.PHONE_NUMBER)
         
         me = await client.get_me()
-        logger.info(f"✅ Logged in as {me.first_name} (@{me.username})")
-        logger.info(f"📊 Premium: {me.premium}")
-        logger.info(f"🔧 4GB Support: {'Yes' if me.premium else 'No (upgrade to Premium)'}")
+        logger.info(f"{ui.EMOJI['success']} Logged in as {me.first_name} (@{me.username})")
+        logger.info(f"{ui.EMOJI['status']} Premium: {me.premium}")
+        logger.info(f"{ui.EMOJI['patch']} 4GB Support: {'Yes' if me.premium else 'No'}")
         
-        logger.info("✅ Userbot is running!")
-        logger.info("📝 Send /start to any chat to see the menu")
+        logger.info(f"{ui.EMOJI['success']} Userbot is running!")
+        logger.info(f"{ui.EMOJI['help']} Send /start to any chat to begin")
         
         # Keep running
         await client.run_until_disconnected()
