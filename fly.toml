@@ -1,6 +1,6 @@
 # Fly.io configuration for Telethon Userbot
 
-app = "ipa-userbot"
+app = "ipa-userbot-6355"
 primary_region = "iad"
 
 [build]
